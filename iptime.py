@@ -3,6 +3,7 @@ import re
 
 import requests
 from bs4 import BeautifulSoup
+from furl import furl
 
 logger = logging.getLogger('IPTIME')
 
@@ -11,24 +12,24 @@ class IPTime:
     def __init__(self, url):
         """
         ipTIME router
-        :param url: URL to access ipTIME router
+        :param url: Base URL to access ipTIME router
         """
-        self.url = url
-
-        self.url_login_page = self.url + 'sess-bin/login_session.cgi'
-        self.url_login_handler = self.url + 'sess-bin/login_handler.cgi'
-        self.url_timepro = self.url + 'sess-bin/timepro.cgi'
-        self.url_list_wol = self.url_timepro + '?tmenu=iframe&smenu=expertconfwollist'
-        self.regex_sess = re.compile('setCookie\\(\'(.*)\'\\);')
+        self.furl_base = furl(url)
+        self.furl_login_page = self.furl_base.copy().set(path='/sess-bin/login_session.cgi')
+        self.furl_login_handler = self.furl_base.copy().set(path='sess-bin/login_handler.cgi')
+        self.furl_timepro = self.furl_base.copy().set(path='sess-bin/timepro.cgi')
+        self.furl_list_wol = self.furl_timepro.copy().set(args={'tmenu': 'iframe', 'smenu': 'expertconfwollist'})
+        self.furl_logout = self.furl_login_page.copy().set(args={'logout': 1})
+        self.regex_session_id = re.compile('setCookie\\(\'(.*)\'\\);')
         self.session = {}
 
-        # check if connections are stable
-        r = requests.get(self.url_login_page).text
+        # check connection stability
+        r = requests.get(self.furl_login_page.url).text
         bs = BeautifulSoup(r, 'html.parser')
         title = bs.find('title').text
         if 'ipTIME' not in title:
-            logger.error('Wrong URL : [{}] {}'.format(title, url))
-            raise RuntimeError('Wrong URL : [{}] {}'.format(title, url))
+            logger.error('Unsupported ipTIME URL : [{}] {}'.format(title, url))
+            raise RuntimeError('Unsupported ipTIME URL : [{}] {}'.format(title, url))
         logger.info('Target ipTIME : {}'.format(title))
 
     def login(self, user, pw):
@@ -39,10 +40,10 @@ class IPTime:
         """
         d = {'init_status': 1, 'captcha_on': 0, 'captcha_file': '', 'username': user, 'passwd': pw,
              'default_passwd': '', 'captcha_code': ''}
-        h = {'Referer': self.url_login_page, 'User-Agent': 'Mozilla/5.0'}
+        h = {'Referer': self.furl_login_page.url, 'User-Agent': 'Mozilla/5.0'}
         logger.debug('Login to ipTIME (USER : {})'.format(user))
-        r = requests.post(self.url_login_handler, d, h).text
-        regex_search = self.regex_sess.search(r)
+        r = requests.post(self.furl_login_handler.url, data=d, headers=h).text
+        regex_search = self.regex_session_id.search(r)
         if regex_search is None or not regex_search.groups():
             logger.error('Login failed (USER : {})'.format(user))
             raise RuntimeError('Login failed (USER : {})'.format(user))
@@ -58,7 +59,7 @@ class IPTime:
         if not self.session['efm_session_id']:
             logger.error('Not Authenticated')
             raise RuntimeError('Not Authenticated')
-        r = requests.get(self.url_list_wol, cookies=self.session).text
+        r = requests.get(self.furl_list_wol.url, cookies=self.session).text
         bs = BeautifulSoup(r, 'html.parser')
         result = []
         for tr in bs.find_all('tr', {'class': 'wol_main_tr'})[1:]:
@@ -78,8 +79,21 @@ class IPTime:
             logger.error('Not Authenticated')
             raise RuntimeError('Not Authenticated')
         d = {'tmenu': 'iframe', 'smenu': 'expertconfwollist', 'nomore': '0', 'wakeupchk': mac, 'act': 'wake'}
-        r = requests.post(self.url_timepro, d, cookies=self.session).text
+        r = requests.post(self.furl_timepro.url, data=d, cookies=self.session).text
         if mac not in r:
             logger.error('WOL failed : [{}]'.format(mac))
             raise RuntimeError('WOL failed : [{}]'.format(mac))
         logger.info('WOL success : {}'.format(mac))
+
+    def logout(self):
+        """
+        Logout method
+        """
+        logger.debug('Logout from ipTIME')
+        h = {'Referer': self.furl_login_page.url, 'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(self.furl_logout.url, headers=h)
+        if r.status_code != 200:
+            logger.error('Logout failed (Status Code : {})'.format(r.status_code))
+            raise RuntimeError('Logout failed (Status Code : {})'.format(r.status_code))
+        self.session.pop('efm_session_id')
+        logger.info('Logout success')

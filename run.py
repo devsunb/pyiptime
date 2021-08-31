@@ -6,6 +6,20 @@ from iptime import IPTime
 logger = logging.getLogger('IPTIME')
 
 
+def run():
+    option = get_option()
+    setup_logger(option.log_level)
+    i = IPTime(option.host)
+    i.login(option.user, option.password)
+    wol_list = i.list_wol()
+    logger.info('WOL List : {}'.format(wol_list))
+    if option.mac.upper() in [w[1] for w in wol_list]:
+        i.wake(option.mac.upper())
+    else:
+        logger.error('Skip wake PC because MAC [{}] is not in WOL List'.format(option.mac))
+    i.logout()
+
+
 def get_option():
     parser = argparse.ArgumentParser(description='Interval copier')
     parser.add_argument('-o', '--host', type=str,
@@ -30,9 +44,4 @@ def setup_logger(log_level):
 
 
 if __name__ == '__main__':
-    option = get_option()
-    setup_logger(option.log_level)
-    i = IPTime(option.host)
-    i.login(option.user, option.password)
-    wol_list = i.list_wol()
-    i.wake(option.mac)
+    run()
